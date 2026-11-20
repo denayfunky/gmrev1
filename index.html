@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Guest Management</title>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{--navy:#17365D;--green:#16834a;--red:#b42318;--bg:#f3f6fa}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#172033;font-family:Arial,sans-serif}
+header{background:var(--navy);color:white;padding:18px 16px}
+header h1{font-size:19px;margin:0 0 5px}
+header p{font-size:12px;margin:0;opacity:.85}
+main{max-width:560px;margin:16px auto;padding:0 12px 28px}
+.card{background:white;border-radius:14px;padding:16px;margin-bottom:13px;box-shadow:0 2px 10px #13294b12}
+label{display:block;font-size:13px;font-weight:bold;margin:10px 0 6px}
+input[type="text"],input[type="number"],input:not([type]),select{width:100%;padding:13px;border:1px solid #cbd5e1;border-radius:9px;font-size:16px;background:white}
+button{border:0;background:var(--navy);color:white;padding:14px 16px;border-radius:10px;font-size:15px;font-weight:bold;width:100%;margin-top:12px;cursor:pointer}
+button.secondary{background:#e8eef6;color:var(--navy)}
+#reader{width:100%;overflow:hidden;border-radius:12px}
+.hint{font-size:12px;color:#64748b;line-height:1.5}
+#result{display:none;border-radius:12px;padding:16px;margin-top:12px}
+#result.good{display:block;background:#e5f5eb;border:1px solid #9ad3ae;color:#14532d}
+#result.bad{display:block;background:#fff0ed;border:1px solid #f2b4aa;color:#8a1c13}
+#result h2{margin:0 0 7px;font-size:18px}
+#result p{margin:6px 0;font-size:14px;overflow-wrap:anywhere}
+.mode{display:inline-block;border-radius:99px;background:#e8eef6;color:var(--navy);padding:6px 10px;font-size:12px;font-weight:bold}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.api{font-size:11px;color:#64748b;overflow-wrap:anywhere}
+.actual-box{background:#fff;border:1px solid #9ad3ae;padding:12px;border-radius:8px;margin-top:10px}
+.actual-box label{font-size:11px;margin:4px 0 2px;color:#14532d}
+.actual-box input[type="number"],.actual-box input[type="text"],.actual-box select{padding:8px;font-size:14px}
+.check-row{display:flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #86efac;padding:10px 12px;border-radius:8px;margin-top:10px;cursor:pointer}
+.check-row input[type="checkbox"]{width:20px;height:20px;accent-color:var(--green);margin:0;cursor:pointer;flex-shrink:0}
+.check-row span{font-size:14px;font-weight:bold;color:#14532d}
+.summary-pill{background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;font-size:13px;color:#1e293b;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+<h1>Grace and Irene</h1>
+<p>Birthday Louis • Marqen Hotel 28 November 2026</p>
+</header>
+<main>
+<section class="card">
+<span class="mode" id="modeLabel">CHECK-IN TAMU</span>
+<label>Mode transaksi</label>
+<select id="mode" onchange="changeMode()">
+<option value="checkin">Check-in tamu</option>
+<option value="souvenir">Penukaran souvenir</option>
+</select>
+<label>Nama petugas</label>
+<input id="operator" placeholder="Contoh: Resepsionis 1" autocomplete="name">
+</section>
+
+<section class="card">
+<label>Kamera</label>
+<select id="cameraSelect">
+<option value="">Kamera utama / belakang</option>
+</select>
+<div id="reader"></div>
+<p class="hint" id="cameraHint">Izinkan akses kamera. Gunakan Chrome dan tautan HTTPS.</p>
+<div class="row">
+<button onclick="startScanner()">Mulai kamera</button>
+<button class="secondary" onclick="stopScanner()">Hentikan</button>
+</div>
+<label>Input kode secara manual (opsional)</label>
+<input id="manualCode" placeholder="Tempel / ketik ID QR">
+<button class="secondary" onclick="manualSubmit()">Proses kode manual</button>
+</section>
+
+<section id="result"></section>
+
+<section class="card">
+<p class="hint">Grace and Irene 2026.</p>
+<p class="api">API: <span id="apiStatus">Menghubungkan…</span></p>
+</section>
+</main>
+
+<script>
+const API_URL='https://script.google.com/macros/s/AKfycbw6UijychhZtLF49VCWD9kMWINJ7E600cYXwf_dZx1G1M-nt23uIismSth2aFBNDScDGQ/exec';
+
+let scanner=null,busy=false,lastCode='',cameras=[];
+const params=new URLSearchParams(location.search);
+
+function currentMode(){
+ return document.getElementById('mode').value;
+}
+
+function changeMode(){
+ document.getElementById('modeLabel').textContent=
+ currentMode()==='souvenir'?'PENUKARAN SOUVENIR':'CHECK-IN TAMU';
+ showResult('','','');
+}
+
+function esc(s){
+ return String(s??'').replace(/[&<>"']/g,c=>({
+ '&':'&amp;',
+ '<':'&lt;',
+ '>':'&gt;',
+ '"':'&quot;',
+ "'":'&#39;'
+ }[c]));
+}
+
+function showResult(kind,title,detail){
+ const b=document.getElementById('result');
+ if(!kind){
+  b.style.display='none';
+  b.className='';
+  return;
+ }
+ b.style.display='block';
+ b.className=kind;
+ b.innerHTML='<h2>'+esc(title)+'</h2>'+detail;
+}
+
+function callAppsScript(payload){
+ return new Promise((resolve,reject)=>{
+  const callback='gasCallback_'+Date.now()+'_'+Math.floor(Math.random()*100000);
+  const script=document.createElement('script');
+  script.async=true;
+  let finished=false;
+
+  const timer=setTimeout(()=>{
+   finish(new Error('Server tidak merespons. Periksa deployment dan izin akses Web App.'));
+  },20000);
+
+  function finish(err,data){
+   if(finished)return;
+   finished=true;
+   clearTimeout(timer);
+   try{delete window[callback]}catch(e){window[callback]=undefined}
+   script.remove();
+   err?reject(err):resolve(data);
+  }
+
+  window[callback]=data=>finish(null,data);
+
+  const query=new URLSearchParams({
+   ...payload,
+   callback,
+   _:Date.now().toString()
+  });
+
+  script.onerror=()=>{
+   finish(new Error('Tidak dapat mengakses API Apps Script. Pastikan Web App dapat diakses.'));
+  };
+
+  script.src=API_URL+'?'+query.toString();
+  document.head.appendChild(script);
+ });
+}
+
+function normalizeQrCode(value){
+ let code=String(value??'').normalize('NFKC')
+  .replace(/[\u200B-\u200D\uFEFF]/g,'')
+  .replace(/[\u0000-\u001F\u007F]/g,'')
+  .trim();
+
+ if(/^https?:\/\//i.test(code)){
+  try{
+   const u=new URL(code);
+   const fromUrl=u.searchParams.get('code')||u.searchParams.get('id')||u.searchParams.get('qr');
+   if(fromUrl)code=fromUrl.trim();
+  }catch(e){}
+ }
+ return code;
+}
+
+function toggleCheckinForm(){
+ const chk=document.getElementById('chkSesuai');
+ const form=document.getElementById('checkinActualForm');
+ if(!chk||!form)return;
+ form.style.display=chk.checked?'none':'block';
+}
+
+function toggleSouvenirForm(){
+ const chk=document.getElementById('chkSouvSesuai');
+ const form=document.getElementById('souvActualForm');
+ if(!chk||!form)return;
+ form.style.display=chk.checked?'none':'block';
+}
+
+function processCode(rawCode, overrideData=null){
+ const code=normalizeQrCode(rawCode);
+ if(busy)return;
+
+ if(!code){
+  showResult('bad','Kode QR kosong','<p>QR terbaca, tetapi tidak berisi kode.</p>');
+  return;
+ }
+
+ const operator=document.getElementById('operator').value.trim();
+ if(!operator){
+  showResult('bad','Isi nama resepsionis','<p>Masukkan nama resepsionis sebelum memindai QR.</p>');
+  return;
+ }
+
+ busy=true;
+ showResult('','','');
+
+ if(scanner?.isScanning){
+  scanner.pause(true);
+ }
+
+ const isUpdate=Boolean(overrideData && overrideData.isUpdate);
+ const payload = {
+  action:'scan',
+  code,
+  mode:currentMode(),
+  operator,
+  userAgent:navigator.userAgent,
+  isUpdate: isUpdate ? 'true' : 'false'
+ };
+
+ if(overrideData){
+  if(overrideData.adults!==undefined)payload.adults = overrideData.adults;
+  if(overrideData.children!==undefined)payload.children = overrideData.children;
+  if(overrideData.nannies!==undefined)payload.nannies = overrideData.nannies;
+  if(overrideData.qtySouvenir!==undefined)payload.qtySouvenir = overrideData.qtySouvenir;
+  if(overrideData.penukar!==undefined)payload.penukar = overrideData.penukar;
+  if(overrideData.giftType!==undefined)payload.giftType = overrideData.giftType;
+  if(overrideData.giftNote!==undefined)payload.giftNote = overrideData.giftNote;
+ }
+
+ callAppsScript(payload).then(res=>{
+  const g=res.guest||{};
+  let d='';
+
+  if(g.name)d+='<p><b>Nama tamu:</b> '+esc(g.name)+'</p>';
+  if(g.phone)d+='<p><b>No. telepon:</b> '+esc(g.phone)+'</p>';
+  if(g.category)d+='<p><b>Kategori:</b> '+esc(g.category)+'</p>';
+
+  if(g.name && currentMode()==='checkin' && res.ok && !isUpdate){
+   d+=`
+    <div class="summary-pill">
+      <b>Data Undangan:</b> Dewasa: <b>${esc(g.adults)}</b> | Anak: <b>${esc(g.children)}</b> | Suster: <b>${esc(g.nannies)}</b> | Souvenir: <b>${esc(g.qtySouvenir)}</b>
+    </div>
+    <label class="check-row" for="chkSesuai">
+      <input type="checkbox" id="chkSesuai" checked onchange="toggleCheckinForm()">
+      <span>Data kehadiran sesuai undangan (Otomatis masuk ke sheet HADIR)</span>
+    </label>
+    <div class="actual-box" style="margin-top:10px;">
+      <b>Angpao / Hadiah:</b>
+      <label>Jenis Pemberian</label>
+      <select id="giftType">
+        <option value="Angpao">Angpao</option>
+        <option value="Hadiah">Hadiah</option>
+        <option value="Angpao & Hadiah">Angpao &amp; Hadiah</option>
+        <option value="Tidak Ada">Tidak Ada</option>
+      </select>
+      <label>Keterangan / Nominal / Kado</label>
+      <input type="text" id="giftNote" placeholder="Contoh: Amplop putih / Kado bayi">
+      <button onclick="saveGiftOnly('${esc(code)}')" style="background:var(--navy); margin-top:8px; padding:9px;">🎀 Catat Angpao / Hadiah</button>
+    </div>
+    <div id="checkinActualForm" class="actual-box" style="display:none;">
+      <b>Input Jumlah Kehadiran Aktual (Tidak Sesuai):</b>
+      <div class="row">
+        <div><label>Dewasa</label><input type="number" id="actAdults" value="${esc(g.adults)}"></div>
+        <div><label>Anak</label><input type="number" id="actChildren" value="${esc(g.children)}"></div>
+      </div>
+      <div class="row">
+        <div><label>Suster</label><input type="number" id="actNannies" value="${esc(g.nannies)}"></div>
+        <div><label>Souvenir</label><input type="number" id="actSouvenir" value="${esc(g.qtySouvenir)}"></div>
+      </div>
+      <button onclick="saveCheckin('${esc(code)}')" style="background:var(--green); margin-top:8px; padding:10px;">💾 Simpan Konfirmasi Kehadiran</button>
+    </div>
+   `;
+  }
+
+  if(g.name && currentMode()==='souvenir' && res.ok && !isUpdate){
+   d+=`
+    <div class="summary-pill">
+      <b>Jatah Souvenir:</b> <b>${esc(g.qtySouvenir)}</b> pcs (a.n. ${esc(g.name)})
+    </div>
+    <label class="check-row" for="chkSouvSesuai">
+      <input type="checkbox" id="chkSouvSesuai" checked onchange="toggleSouvenirForm()">
+      <span>Pengambilan souvenir sesuai (Otomatis masuk ke sheet SOUVENIR_TUKAR)</span>
+    </label>
+    <div id="souvActualForm" class="actual-box" style="display:none;">
+      <b>Input Detail Pengambilan Aktual (Jika Diwakilkan / Berbeda):</b>
+      <label>Nama Penukar</label>
+      <input type="text" id="actPenukar" value="${esc(g.name)}" placeholder="Nama pengambil">
+      <label>Jumlah Souvenir yang Diberikan</label>
+      <input type="number" id="actSouvQty" value="${esc(g.qtySouvenir)}">
+      <button onclick="saveSouvenir('${esc(code)}')" style="background:var(--green); margin-top:8px; padding:10px;">🎁 Konfirmasi Penukaran Souvenir</button>
+    </div>
+   `;
+  }
+
+  d+='<p><b>Waktu server:</b> '+esc(res.timestamp||'')+'</p>';
+  if(res.message)d+='<p>'+esc(res.message)+'</p>';
+
+  d+= '<button onclick="resumeScanner()" style="background:var(--green); margin-top:14px;">🔄 Scan Tamu Berikutnya</button>';
+
+  showResult(res.ok?'good':'bad', res.ok?'BERHASIL':(res.status||'GAGAL'), d||'<p>Respons server kosong.</p>');
+  document.getElementById('manualCode').value='';
+  busy=false;
+  lastCode=code;
+
+ }).catch(err=>{
+  showResult('bad','Gagal menghubungi server','<p>'+esc(err.message||err)+'</p><button onclick="resumeScanner()" style="background:var(--red); margin-top:14px;">Coba Lagi</button>');
+  busy=false;
+ });
+}
+
+function saveGiftOnly(code){
+ const giftType = document.getElementById('giftType').value;
+ const giftNote = document.getElementById('giftNote').value;
+ busy = false;
+ processCode(code, { giftType, giftNote, isUpdate: true });
+}
+
+function saveCheckin(code){
+ const adults = document.getElementById('actAdults').value;
+ const children = document.getElementById('actChildren').value;
+ const nannies = document.getElementById('actNannies').value;
+ const qtySouvenir = document.getElementById('actSouvenir').value;
+ const giftType = document.getElementById('giftType') ? document.getElementById('giftType').value : 'Belum diisi';
+ const giftNote = document.getElementById('giftNote') ? document.getElementById('giftNote').value : '';
+ busy = false;
+ processCode(code, { adults, children, nannies, qtySouvenir, giftType, giftNote, isUpdate: true });
+}
+
+function saveSouvenir(code){
+ const penukar = document.getElementById('actPenukar').value;
+ const qtySouvenir = document.getElementById('actSouvQty').value;
+ busy = false;
+ processCode(code, { penukar, qtySouvenir, isUpdate: true });
+}
+
+function onScanSuccess(decoded){
+ const code=normalizeQrCode(decoded);
+ if(busy||!code||code===lastCode)return;
+ if(scanner?.isScanning)scanner.pause(true);
+ processCode(code);
+}
+
+function resumeScanner(){
+ showResult('','','');
+ lastCode='';
+ if(scanner?.isScanning){
+  scanner.resume();
+ } else {
+  startScanner();
+ }
+}
+
+async function refreshCameras(){
+ try{
+  if(!navigator.mediaDevices?.getUserMedia)return;
+  const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+  stream.getTracks().forEach(t=>t.stop());
+  cameras=await Html5Qrcode.getCameras();
+  const sel=document.getElementById('cameraSelect');
+  sel.innerHTML='';
+  cameras.forEach((c,i)=>{
+   const o=document.createElement('option');
+   o.value=c.id;
+   o.textContent=c.label||('Kamera '+(i+1));
+   sel.appendChild(o);
+  });
+  const back=cameras.find(c=>/back|rear|environment|belakang/i.test(c.label));
+  if(back)sel.value=back.id;
+ }catch(e){}
+}
+
+async function startScanner(){
+ if(!window.Html5Qrcode)return;
+ try{
+  if(!scanner)scanner=new Html5Qrcode('reader');
+  const id=document.getElementById('cameraSelect').value;
+  await scanner.start(
+   id||{facingMode:'environment'},
+   { fps: 25, qrbox: {width: 240, height: 240} },
+   onScanSuccess,
+   ()=>{}
+  );
+  document.getElementById('cameraHint').textContent='Kamera aktif. Arahkan QR ke kotak scan.';
+ }catch(e){
+  showResult('bad','Kamera tidak dapat dibuka','<p>'+esc(e.message||e)+'</p>');
+ }
+}
+
+async function stopScanner(){
+ if(scanner?.isScanning){try{await scanner.stop()}catch(e){}}
+}
+
+function manualSubmit(){
+ const c=document.getElementById('manualCode').value.trim();
+ if(!c){showResult('bad','Kode kosong','<p>Masukkan ID QR.</p>');return;}
+ processCode(c);
+}
+
+window.addEventListener('load',()=>{
+ document.getElementById('mode').value=params.get('mode')==='souvenir'?'souvenir':'checkin';
+ changeMode();
+ document.getElementById('apiStatus').textContent='Server Terhubung';
+ if(window.isSecureContext && window.Html5Qrcode){ refreshCameras(); }
+});
+</script>
+</body>
+</html>
