@@ -173,6 +173,47 @@ function resumeScannerSafe(){
  }
 }
 
+function parseApiTextResponse_(txt){
+ const clean = String(txt || '').trim();
+ const jsonpMatch = clean.match(/^[A-Za-z_$][0-9A-Za-z_$\.]*\((.*)\);?$/s);
+ return JSON.parse(jsonpMatch ? jsonpMatch[1] : clean);
+}
+
+function runJsonpFallback(payload, resolve, reject, fetchReason){
+ const callback = 'gasCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+ const script = document.createElement('script');
+ script.async = true;
+ let finished = false;
+
+ const timer = setTimeout(() => {
+  finish(new Error('Timeout JSONP (fetch: ' + fetchReason + ')'));
+ }, 25000);
+
+ function finish(err, data){
+  if(finished) return;
+  finished = true;
+  clearTimeout(timer);
+  try{ delete window[callback]; }catch(e){ window[callback] = undefined; }
+  if(script.parentNode) script.remove();
+  err ? reject(err) : resolve(data);
+ }
+
+ window[callback] = data => finish(null, data);
+
+ const query = new URLSearchParams({
+  ...payload,
+  callback,
+  _: Date.now().toString()
+ });
+
+ script.onerror = () => {
+  finish(new Error('Script JSONP error (fetch: ' + fetchReason + ')'));
+ };
+
+ script.src = API_URL + '?' + query.toString();
+ document.head.appendChild(script);
+}
+
 function callAppsScript(payload){
  return new Promise((resolve, reject) => {
   if(!isValidApiUrl(API_URL)){
@@ -180,38 +221,41 @@ function callAppsScript(payload){
    return;
   }
 
-  const callback = 'gasCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
-  const script = document.createElement('script');
-  script.async = true;
-  let finished = false;
-
-  const timer = setTimeout(() => {
-   finish(new Error('Server tidak merespons dalam 20 detik. Periksa deployment Web App dan izin akses "Anyone".'));
-  }, 20000);
-
-  function finish(err, data){
-   if(finished) return;
-   finished = true;
-   clearTimeout(timer);
-   try{ delete window[callback]; }catch(e){ window[callback] = undefined; }
-   if(script.parentNode) script.remove();
-   err ? reject(err) : resolve(data);
-  }
-
-  window[callback] = data => finish(null, data);
-
   const query = new URLSearchParams({
    ...payload,
-   callback,
-   _:Date.now().toString()
+   _: Date.now().toString()
   });
+  const targetUrl = API_URL + '?' + query.toString();
 
-  script.onerror = () => {
-   finish(new Error('Gagal memuat skrip dari API_URL. Pastikan deployment Web App aktif dan dapat diakses publik (Anyone).'));
-  };
+  if(typeof fetch === 'function'){
+   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+   const fetchTimer = setTimeout(() => {
+    if(controller) controller.abort();
+   }, 15000);
 
-  script.src = API_URL + '?' + query.toString();
-  document.head.appendChild(script);
+   fetch(targetUrl, {
+    method: 'GET',
+    redirect: 'follow',
+    cache: 'no-store',
+    signal: controller ? controller.signal : undefined
+   })
+   .then(r => {
+    clearTimeout(fetchTimer);
+    if(!r.ok) throw new Error('Fetch HTTP ' + r.status);
+    return r.text();
+   })
+   .then(txt => {
+    resolve(parseApiTextResponse_(txt));
+   })
+   .catch(fetchErr => {
+    clearTimeout(fetchTimer);
+    const fetchMsg = fetchErr && fetchErr.message ? fetchErr.message : String(fetchErr);
+    runJsonpFallback(payload, resolve, reject, fetchMsg);
+   });
+   return;
+  }
+
+  runJsonpFallback(payload, resolve, reject, 'Fetch tidak tersedia');
  });
 }
 
@@ -531,11 +575,19 @@ function checkApiConnection(){
   statusEl.style.color = '#b42318';
   return;
  }
+ statusEl.textContent = 'Menghubungkan…';
+ statusEl.style.color = '#64748b';
+
  callAppsScript({}).then(res => {
-  statusEl.textContent = res && res.ok ? 'Terhubung (' + (res.status || 'OK') + ')' : 'Respons tidak sesuai';
-  statusEl.style.color = res && res.ok ? '#16834a' : '#b42318';
+  if(res && res.ok){
+   statusEl.textContent = 'Terhubung (' + (res.status || 'OK') + ')';
+   statusEl.style.color = '#16834a';
+  } else {
+   statusEl.textContent = 'Respons tidak sesuai';
+   statusEl.style.color = '#b42318';
+  }
  }).catch(err => {
-  statusEl.textContent = 'Gagal terhubung';
+  statusEl.textContent = 'Gagal terhubung: ' + (err && err.message ? err.message : 'Error');
   statusEl.style.color = '#b42318';
  });
 }
