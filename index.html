@@ -30,8 +30,10 @@ button.secondary{background:#e8eef6;color:var(--navy)}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .api{font-size:11px;color:#64748b;overflow-wrap:anywhere}
 .actual-box{background:#fff;border:1px solid #9ad3ae;padding:12px;border-radius:8px;margin-top:10px}
+.actual-box.locked-box{border-color:#d97706;box-shadow:0 0 0 2px #fef3c7}
 .actual-box label{font-size:11px;margin:4px 0 2px;color:#14532d}
 .actual-box input[type="number"],.actual-box input[type="text"],.actual-box select{padding:8px;font-size:14px}
+.lock-note{background:#fffbeb;border:1px solid #f59e0b;color:#92400e;border-radius:8px;padding:8px 10px;font-size:12px;font-weight:bold;margin-top:8px}
 .check-row{display:flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #86efac;padding:10px 12px;border-radius:8px;margin-top:10px;cursor:pointer}
 .check-row input[type="checkbox"]{width:20px;height:20px;accent-color:var(--green);margin:0;cursor:pointer;flex-shrink:0}
 .check-row span{font-size:14px;font-weight:bold;color:#14532d}
@@ -81,10 +83,11 @@ button.secondary{background:#e8eef6;color:var(--navy)}
 
 <script>
 // Ganti dengan URL Web App deployment Google Apps Script Anda (berakhiran /exec)
-const API_URL = 'https://script.google.com/macros/s/AKfycbw6UijychhZtLF49VCWD9kMWINJ7E600cYXwf_dZx1G1M-nt23uIismSth2aFBNDScDGQ/exec';
+const API_URL = 'ISI_DENGAN_URL_DEPLOY_APPS_SCRIPT_ANDA';
 
 let scanner = null;
 let busy = false;
+let pendingGiftRequired = false;
 let lastScanAt = 0;
 let cameras = [];
 const params = new URLSearchParams(location.search);
@@ -98,6 +101,15 @@ function currentMode(){
 }
 
 function changeMode(){
+ if(pendingGiftRequired){
+  document.getElementById('mode').value = 'checkin';
+  showResult(
+   'bad',
+   'Wajib Catat Angpao / Hadiah',
+   '<p>Tekan tombol <b>"🎀 Catat Angpao / Hadiah"</b> terlebih dahulu sebelum mengganti mode atau memindai tamu berikutnya.</p>'
+  );
+  return;
+ }
  document.getElementById('modeLabel').textContent =
   currentMode() === 'souvenir' ? 'PENUKARAN SOUVENIR' : 'CHECK-IN TAMU';
  showResult('', '', '');
@@ -130,7 +142,6 @@ function showResult(kind, title, detail){
 function pauseScannerSafe(){
  try{
   if(scanner && typeof scanner.getState === 'function'){
-   // State 2 = SCANNING
    if(scanner.getState() === 2){
     scanner.pause(true);
    }
@@ -143,7 +154,6 @@ function pauseScannerSafe(){
 function resumeScannerSafe(){
  try{
   if(scanner && typeof scanner.getState === 'function'){
-   // State 3 = PAUSED
    if(scanner.getState() === 3){
     scanner.resume();
     return;
@@ -192,7 +202,7 @@ function callAppsScript(payload){
   const query = new URLSearchParams({
    ...payload,
    callback,
-   _: Date.now().toString()
+   _:Date.now().toString()
   });
 
   script.onerror = () => {
@@ -237,6 +247,16 @@ function toggleSouvenirForm(){
 function processCode(rawCode, overrideData = null){
  const code = normalizeQrCode(rawCode);
  if(busy) return;
+
+ if(pendingGiftRequired && !(overrideData && overrideData.isUpdate)){
+  pauseScannerSafe();
+  showResult(
+   'bad',
+   'Wajib Catat Angpao / Hadiah',
+   '<p>Silakan tekan tombol <b>"🎀 Catat Angpao / Hadiah"</b> terlebih dahulu sebelum scan tamu berikutnya.</p>'
+  );
+  return;
+ }
 
  if(!code){
   showResult('bad', 'Kode QR kosong', '<p>QR terbaca, tetapi tidak berisi kode.</p>');
@@ -283,11 +303,18 @@ function processCode(rawCode, overrideData = null){
   const g = res.guest || {};
   let d = '';
 
+  const isInitialCheckinSuccess = Boolean(g.name && currentMode() === 'checkin' && res.ok && !isUpdate);
+  if(isInitialCheckinSuccess){
+   pendingGiftRequired = true;
+  } else if(isUpdate && res.ok){
+   pendingGiftRequired = false;
+  }
+
   if(g.name) d += '<p><b>Nama tamu:</b> ' + esc(g.name) + '</p>';
   if(g.phone) d += '<p><b>No. telepon:</b> ' + esc(g.phone) + '</p>';
   if(g.category) d += '<p><b>Kategori:</b> ' + esc(g.category) + '</p>';
 
-  if(g.name && currentMode() === 'checkin' && res.ok && !isUpdate){
+  if(isInitialCheckinSuccess){
    d += `
     <div class="summary-pill">
       <b>Data Undangan:</b> Dewasa: <b>${esc(g.adults)}</b> | Anak: <b>${esc(g.children)}</b> | Suster: <b>${esc(g.nannies)}</b> | Souvenir: <b>${esc(g.qtySouvenir)}</b>
@@ -296,8 +323,8 @@ function processCode(rawCode, overrideData = null){
       <input type="checkbox" id="chkSesuai" checked onchange="toggleCheckinForm()">
       <span>Data kehadiran sesuai undangan (Otomatis masuk ke sheet Guest_Checkin)</span>
     </label>
-    <div class="actual-box" style="margin-top:10px;">
-      <b>Angpao / Hadiah:</b>
+    <div class="actual-box locked-box" style="margin-top:10px;">
+      <b>Angpao / Hadiah (Wajib Ditekan):</b>
       <label>Jenis Pemberian</label>
       <select id="giftType">
         <option value="Angpao">Angpao</option>
@@ -307,7 +334,8 @@ function processCode(rawCode, overrideData = null){
       </select>
       <label>Keterangan / Nominal / Kado</label>
       <input type="text" id="giftNote" placeholder="Contoh: Amplop putih / Kado bayi">
-      <button onclick="saveGiftOnly('${esc(code)}')" style="background:var(--navy); margin-top:8px; padding:9px;">🎀 Catat Angpao / Hadiah</button>
+      <button id="btnSaveGift" onclick="saveGiftOnly('${esc(code)}')" style="background:var(--navy); margin-top:8px; padding:10px;">🎀 Catat Angpao / Hadiah</button>
+      <div class="lock-note">Tombol "Scan Tamu Berikutnya" terkunci sampai "Catat Angpao / Hadiah" ditekan.</div>
     </div>
     <div id="checkinActualForm" class="actual-box" style="display:none;">
       <b>Input Jumlah Kehadiran Aktual (Tidak Sesuai):</b>
@@ -347,11 +375,14 @@ function processCode(rawCode, overrideData = null){
   d += '<p><b>Waktu server:</b> ' + esc(res.timestamp || '') + '</p>';
   if(res.message) d += '<p>' + esc(res.message) + '</p>';
 
-  d += '<button onclick="resumeScanner()" style="background:var(--green); margin-top:14px;">🔄 Scan Tamu Berikutnya</button>';
+  if(!pendingGiftRequired){
+   d += '<button id="btnNextGuest" onclick="resumeScanner()" style="background:var(--green); margin-top:14px;">🔄 Scan Tamu Berikutnya</button>';
+  }
 
   showResult(res.ok ? 'good' : 'bad', res.ok ? 'BERHASIL' : (res.status || 'GAGAL'), d || '<p>Respons server kosong.</p>');
   document.getElementById('manualCode').value = '';
-  busy = false;
+  // Jika masih menunggu tekan "Catat Angpao / Hadiah", pertahankan busy=true agar scan berikutnya diblokir
+  busy = pendingGiftRequired;
   lastScanAt = Date.now();
  }).catch(err => {
   showResult(
@@ -365,6 +396,8 @@ function processCode(rawCode, overrideData = null){
 }
 
 function saveGiftOnly(code){
+ const btn = document.getElementById('btnSaveGift');
+ if(btn) btn.disabled = true;
  const giftType = document.getElementById('giftType').value;
  const giftNote = document.getElementById('giftNote').value;
  busy = false;
@@ -392,12 +425,21 @@ function saveSouvenir(code){
 function onScanSuccess(decoded){
  const code = normalizeQrCode(decoded);
  const now = Date.now();
- if(busy || !code) return;
+ if(busy || pendingGiftRequired || !code) return;
  if(now - lastScanAt < 1200) return;
  processCode(code);
 }
 
 function resumeScanner(){
+ if(pendingGiftRequired){
+  showResult(
+   'bad',
+   'Wajib Catat Angpao / Hadiah',
+   '<p>Tekan tombol <b>"🎀 Catat Angpao / Hadiah"</b> terlebih dahulu sebelum scan tamu berikutnya.</p>'
+  );
+  return;
+ }
+ busy = false;
  showResult('', '', '');
  lastScanAt = 0;
  resumeScannerSafe();
@@ -423,6 +465,14 @@ async function refreshCameras(){
 }
 
 async function startScanner(){
+ if(pendingGiftRequired){
+  showResult(
+   'bad',
+   'Wajib Catat Angpao / Hadiah',
+   '<p>Tekan tombol <b>"🎀 Catat Angpao / Hadiah"</b> terlebih dahulu sebelum memulai scan baru.</p>'
+  );
+  return;
+ }
  if(!window.Html5Qrcode){
   showResult('bad', 'Library scanner tidak termuat', '<p>Periksa koneksi internet untuk memuat html5-qrcode.</p>');
   return;
@@ -458,6 +508,14 @@ async function stopScanner(){
 }
 
 function manualSubmit(){
+ if(pendingGiftRequired){
+  showResult(
+   'bad',
+   'Wajib Catat Angpao / Hadiah',
+   '<p>Tekan tombol <b>"🎀 Catat Angpao / Hadiah"</b> terlebih dahulu sebelum memproses kode lain.</p>'
+  );
+  return;
+ }
  const c = document.getElementById('manualCode').value.trim();
  if(!c){
   showResult('bad', 'Kode kosong', '<p>Masukkan ID QR.</p>');
