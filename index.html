@@ -15,8 +15,9 @@ header p{font-size:12px;margin:0;opacity:.85}
 main{max-width:560px;margin:16px auto;padding:0 12px 28px}
 .card{background:white;border-radius:14px;padding:16px;margin-bottom:13px;box-shadow:0 2px 10px #13294b12}
 label{display:block;font-size:13px;font-weight:bold;margin:10px 0 6px}
-input[type="text"],input[type="number"],input:not([type]),select{width:100%;padding:13px;border:1px solid #cbd5e1;border-radius:9px;font-size:16px;background:white}
+input[type="text"],input[type="number"],input[type="password"],input:not([type]),select{width:100%;padding:13px;border:1px solid #cbd5e1;border-radius:9px;font-size:16px;background:white}
 button{border:0;background:var(--navy);color:white;padding:14px 16px;border-radius:10px;font-size:15px;font-weight:bold;width:100%;margin-top:12px;cursor:pointer}
+button:disabled{opacity:.55;cursor:not-allowed}
 button.secondary{background:#e8eef6;color:var(--navy)}
 #reader{width:100%;overflow:hidden;border-radius:12px;min-height:40px}
 .hint{font-size:12px;color:#64748b;line-height:1.5}
@@ -38,6 +39,9 @@ button.secondary{background:#e8eef6;color:var(--navy)}
 .check-row input[type="checkbox"]{width:20px;height:20px;accent-color:var(--green);margin:0;cursor:pointer;flex-shrink:0}
 .check-row span{font-size:14px;font-weight:bold;color:#14532d}
 .summary-pill{background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;font-size:13px;color:#1e293b;margin-top:8px}
+.gate-box{background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;padding:12px;font-size:13px;line-height:1.55;color:#1e293b}
+.gate-box ul{margin:6px 0 0;padding-left:18px}
+.gate-err{background:#fff0ed;border:1px solid #f2b4aa;color:#8a1c13;border-radius:8px;padding:10px 12px;font-size:13px;margin-top:10px;display:none}
 </style>
 </head>
 <body>
@@ -46,6 +50,37 @@ button.secondary{background:#e8eef6;color:var(--navy)}
 <p>Birthday Louis • Marqen Hotel 28 November 2026</p>
 </header>
 <main>
+<!-- LAYAR PERSETUJUAN SEBELUM MASUK FRONT PAGE -->
+<section id="approvalGate" class="card">
+<span class="mode">PERSETUJUAN PETUGAS</span>
+<h2 style="margin:10px 0 6px;font-size:18px;color:var(--navy);">Konfirmasi &amp; Akses Petugas</h2>
+<div class="gate-box">
+<strong>Ketentuan Penggunaan Scanner:</strong>
+<ul>
+<li>Catat data kehadiran &amp; <strong>Angpao / Hadiah</strong> secara akurat pada setiap tamu check-in.</li>
+<li>Pastikan penukaran souvenir sesuai kuota tamu yang sudah check-in.</li>
+<li>Gunakan perangkat dan jaringan yang diizinkan panitia acara.</li>
+</ul>
+</div>
+
+<label for="gateOperator">Nama Petugas</label>
+<input id="gateOperator" placeholder="Contoh: Resepsionis 1" autocomplete="name">
+
+<label for="gatePin">Kode Akses Petugas (opsional)</label>
+<input id="gatePin" type="password" placeholder="Kosongkan jika tidak memakai PIN" autocomplete="off">
+
+<label class="check-row" for="chkApprove">
+<input type="checkbox" id="chkApprove">
+<span>Saya menyetujui ketentuan di atas dan siap bertugas</span>
+</label>
+
+<div id="gateError" class="gate-err"></div>
+<button id="btnEnterApp" onclick="submitApproval()">Setujui &amp; Masuk ke Scanner</button>
+<p class="api" style="margin-top:12px;">Status API: <span id="gateApiStatus">Menghubungkan…</span></p>
+</section>
+
+<!-- FRONT PAGE SCANNER (TERKUNCI SAMPAI DISETUJUI) -->
+<div id="scannerApp" style="display:none;">
 <section class="card">
 <span class="mode" id="modeLabel">CHECK-IN TAMU</span>
 <label>Mode transaksi</label>
@@ -55,6 +90,7 @@ button.secondary{background:#e8eef6;color:var(--navy)}
 </select>
 <label>Nama petugas</label>
 <input id="operator" placeholder="Contoh: Resepsionis 1" autocomplete="name">
+<button class="secondary" onclick="lockApprovalGate()" style="margin-top:10px;padding:10px;font-size:13px;">🔒 Kembali ke Layar Persetujuan</button>
 </section>
 
 <section class="card">
@@ -79,11 +115,15 @@ button.secondary{background:#e8eef6;color:var(--navy)}
 <p class="hint">Grace and Irene 2026.</p>
 <p class="api">API: <span id="apiStatus">Menghubungkan…</span></p>
 </section>
+</div>
 </main>
 
 <script>
 // Ganti dengan URL Web App deployment Google Apps Script Anda (berakhiran /exec)
-const API_URL = 'https://script.google.com/macros/s/AKfycbw6UijychhZtLF49VCWD9kMWINJ7E600cYXwf_dZx1G1M-nt23uIismSth2aFBNDScDGQ/exec';
+const API_URL = 'ISI_DENGAN_URL_DEPLOY_APPS_SCRIPT_ANDA';
+
+// Jika ingin mewajibkan PIN petugas, isi misalnya '2026'. Biarkan '' jika cukup centang + nama petugas.
+const REQUIRED_STAFF_PIN = '';
 
 let scanner = null;
 let busy = false;
@@ -94,6 +134,64 @@ const params = new URLSearchParams(location.search);
 
 function isValidApiUrl(url){
  return /^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec(?:\?.*)?$/.test(String(url || '').trim());
+}
+
+function showGateError(msg){
+ const el = document.getElementById('gateError');
+ if(!msg){
+  el.style.display = 'none';
+  el.textContent = '';
+  return;
+ }
+ el.style.display = 'block';
+ el.textContent = msg;
+}
+
+function submitApproval(){
+ const name = document.getElementById('gateOperator').value.trim();
+ const pin = document.getElementById('gatePin').value.trim();
+ const approved = document.getElementById('chkApprove').checked;
+
+ if(!name){
+  showGateError('Silakan isi Nama Petugas terlebih dahulu.');
+  return;
+ }
+ if(REQUIRED_STAFF_PIN && pin !== REQUIRED_STAFF_PIN){
+  showGateError('Kode akses petugas tidak sesuai.');
+  return;
+ }
+ if(!approved){
+  showGateError('Centang kotak persetujuan terlebih dahulu untuk masuk.');
+  return;
+ }
+
+ showGateError('');
+ document.getElementById('operator').value = name;
+ document.getElementById('approvalGate').style.display = 'none';
+ document.getElementById('scannerApp').style.display = 'block';
+
+ if(window.isSecureContext && window.Html5Qrcode){
+  refreshCameras();
+ }
+}
+
+async function lockApprovalGate(){
+ if(pendingGiftRequired){
+  showResult(
+   'bad',
+   'Wajib Catat Angpao / Hadiah',
+   '<p>Selesaikan dulu tombol <b>"🎀 Catat Angpao / Hadiah"</b> sebelum keluar atau mengganti sesi.</p>'
+  );
+  return;
+ }
+ await stopScanner();
+ busy = false;
+ showResult('', '', '');
+ document.getElementById('chkApprove').checked = false;
+ document.getElementById('gatePin').value = '';
+ document.getElementById('gateOperator').value = document.getElementById('operator').value.trim();
+ document.getElementById('scannerApp').style.display = 'none';
+ document.getElementById('approvalGate').style.display = 'block';
 }
 
 function currentMode(){
@@ -381,7 +479,6 @@ function processCode(rawCode, overrideData = null){
 
   showResult(res.ok ? 'good' : 'bad', res.ok ? 'BERHASIL' : (res.status || 'GAGAL'), d || '<p>Respons server kosong.</p>');
   document.getElementById('manualCode').value = '';
-  // Jika masih menunggu tekan "Catat Angpao / Hadiah", pertahankan busy=true agar scan berikutnya diblokir
   busy = pendingGiftRequired;
   lastScanAt = Date.now();
  }).catch(err => {
@@ -526,17 +623,28 @@ function manualSubmit(){
 
 function checkApiConnection(){
  const statusEl = document.getElementById('apiStatus');
+ const gateStatusEl = document.getElementById('gateApiStatus');
+ const setAll = (text, color) => {
+  statusEl.textContent = text;
+  statusEl.style.color = color;
+  if(gateStatusEl){
+   gateStatusEl.textContent = text;
+   gateStatusEl.style.color = color;
+  }
+ };
+
  if(!isValidApiUrl(API_URL)){
-  statusEl.textContent = 'Belum dikonfigurasi (isi API_URL)';
-  statusEl.style.color = '#b42318';
+  setAll('Belum dikonfigurasi (isi API_URL)', '#b42318');
   return;
  }
  callAppsScript({}).then(res => {
-  statusEl.textContent = res && res.ok ? 'Terhubung (' + (res.status || 'OK') + ')' : 'Respons tidak sesuai';
-  statusEl.style.color = res && res.ok ? '#16834a' : '#b42318';
- }).catch(err => {
-  statusEl.textContent = 'Gagal terhubung';
-  statusEl.style.color = '#b42318';
+  if(res && res.ok){
+   setAll('Terhubung (' + (res.status || 'OK') + ')', '#16834a');
+  } else {
+   setAll('Respons tidak sesuai', '#b42318');
+  }
+ }).catch(() => {
+  setAll('Gagal terhubung', '#b42318');
  });
 }
 
@@ -544,9 +652,6 @@ window.addEventListener('load', () => {
  document.getElementById('mode').value = params.get('mode') === 'souvenir' ? 'souvenir' : 'checkin';
  changeMode();
  checkApiConnection();
- if(window.isSecureContext && window.Html5Qrcode){
-  refreshCameras();
- }
 });
 </script>
 </body>
